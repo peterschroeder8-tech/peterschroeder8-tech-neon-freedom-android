@@ -1,0 +1,68 @@
+name: Build Neon Freedom Android APK
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [ "main" ]
+    paths:
+      - "rapt_gradle_project/**"
+      - ".github/workflows/build-android-apk.yml"
+
+permissions:
+  contents: read
+
+jobs:
+  build-apk:
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Java 21
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "21"
+
+      - name: Set up Android SDK
+        uses: android-actions/setup-android@v3
+
+      - name: Install Android SDK 36
+        shell: bash
+        run: |
+          yes | sdkmanager --licenses >/dev/null || true
+          sdkmanager "platform-tools" "platforms;android-36" "build-tools;36.0.0"
+
+      - name: Prepare RAPT Gradle project
+        shell: bash
+        run: |
+          SDK="${ANDROID_SDK_ROOT:-${ANDROID_HOME}}"
+          sed "s|SDK_PATH|$SDK|" rapt_gradle_project/local.properties.template > rapt_gradle_project/local.properties
+          sed "s|SDK_PATH|$SDK|" rapt_gradle_project/bundle.properties.template > rapt_gradle_project/bundle.properties
+          chmod +x rapt_gradle_project/gradlew
+
+      - name: Build installable debug APK
+        working-directory: rapt_gradle_project
+        run: ./gradlew --no-daemon --stacktrace assembleDebug
+
+      - name: Collect APK
+        shell: bash
+        run: |
+          mkdir -p dist
+          APK="$(find rapt_gradle_project/app/build/outputs/apk/debug -type f -name '*.apk' | head -n 1)"
+          test -n "$APK"
+          cp "$APK" dist/Neon-Freedom-v0.3-Android-debug.apk
+          sha256sum dist/Neon-Freedom-v0.3-Android-debug.apk > dist/SHA256SUMS.txt
+          ls -lh dist/
+
+      - name: Upload APK artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: Neon-Freedom-v0.3-Android-APK
+          path: |
+            dist/Neon-Freedom-v0.3-Android-debug.apk
+            dist/SHA256SUMS.txt
+          if-no-files-found: error
+          retention-days: 30
