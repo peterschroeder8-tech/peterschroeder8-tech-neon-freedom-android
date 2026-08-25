@@ -5,7 +5,7 @@ on:
   push:
     branches: [ "main" ]
     paths:
-      - "rapt_gradle_project/**"
+      - "source/**"
       - ".github/workflows/build-android-apk.yml"
 
 permissions:
@@ -14,7 +14,7 @@ permissions:
 jobs:
   build-apk:
     runs-on: ubuntu-latest
-    timeout-minutes: 45
+    timeout-minutes: 60
 
     steps:
       - name: Checkout
@@ -26,43 +26,152 @@ jobs:
           distribution: temurin
           java-version: "21"
 
-      - name: Set up Android SDK
-        uses: android-actions/setup-android@v3
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
 
-      - name: Install Android SDK 36
+      - name: Reconstruct Ren'Py project
         shell: bash
         run: |
-          yes | sdkmanager --licenses >/dev/null || true
-          sdkmanager "platform-tools" "platforms;android-36" "build-tools;36.0.0"
+          set -euxo pipefail
+          mkdir -p project
+          cat source/chunk*.b64 | tr -d '\r\n ' | base64 --decode > /tmp/neon-source.tar.xz
+          tar -xJf /tmp/neon-source.tar.xz -C project
+          test -f project/android.json
+          test -f project/game/script.rpy
+          test -f project/game/script_v03.rpy
 
-      - name: Prepare RAPT Gradle project
+      - name: Generate game artwork
         shell: bash
         run: |
-          SDK="${ANDROID_SDK_ROOT:-${ANDROID_HOME}}"
-          sed "s|SDK_PATH|$SDK|" rapt_gradle_project/local.properties.template > rapt_gradle_project/local.properties
-          sed "s|SDK_PATH|$SDK|" rapt_gradle_project/bundle.properties.template > rapt_gradle_project/bundle.properties
-          chmod +x rapt_gradle_project/gradlew
+          python -m pip install --disable-pip-version-check pillow
+          python - <<'PY'
+          from pathlib import Path
+          from PIL import Image, ImageDraw, ImageFont
+          import hashlib, colorsys
 
-      - name: Build installable debug APK
-        working-directory: rapt_gradle_project
-        run: ./gradlew --no-daemon --stacktrace assembleDebug
+          root = Path("project")
+          game = root / "game"
+          bgs = "alley apartment archive bar boardroom boutique cafe clinic club courthouse garage harbor market metro newsroom office park rooftop room safehouse street studio techshop warehouse".split()
+          chars = "elias iris jonas kiara lena maya nora samira theo viktor".split()
+          contacts = "maya lena samira nora elias iris jonas kiara theo".split()
+          styles = "casual evening work".split()
+          items = "access_badge apartment_key archive_key board_proxy bracelet burner_phone camera coffee contract_photo energy_drink evidence garage_token gift_box harbor_pass jacket jammer keycard legal_packet lockpick manifest master_ledger medkit memory_card metro_pass painkillers phone press_card recorder signal_chip train_ticket usb voice_note".split()
+          outfits = "casual_chic courier executive formal harbor nightlife stealth street".split()
+          gallery = "apartment_evening board_vote echo_recording final_choice first_signal garage_pact harbor_signal new_dawn news_drop public_hearing quiet_night river_choice rooftop_truth warehouse_run".split()
 
-      - name: Collect APK
+          def palette(name):
+              h = int(hashlib.sha256(name.encode()).hexdigest()[:8], 16) / 0xffffffff
+              a = colorsys.hsv_to_rgb(h, .55, .75)
+              b = colorsys.hsv_to_rgb((h + .12) % 1, .7, .35)
+              return tuple(int(x*255) for x in a), tuple(int(x*255) for x in b)
+
+          def font(size):
+              for p in ("/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf", "/usr/share/fonts/truetype/liberation2/LiberationSans-Bold.ttf"):
+                  if Path(p).exists():
+                      return ImageFont.truetype(p, size)
+              return ImageFont.load_default()
+
+          def gradient(size, name, alpha=False):
+              w, h = size
+              c1, c2 = palette(name)
+              im = Image.new("RGBA" if alpha else "RGB", size, (0,0,0,0) if alpha else c2)
+              d = ImageDraw.Draw(im)
+              for y in range(h):
+                  t = y / max(1, h-1)
+                  c = tuple(int(c1[i]*(1-t) + c2[i]*t) for i in range(3))
+                  d.line((0,y,w,y), fill=c+(255,) if alpha else c)
+              return im
+
+          def label(im, text, y=None):
+              d = ImageDraw.Draw(im)
+              f = font(max(16, int(im.width/20)))
+              box = d.textbbox((0,0), text, font=f)
+              tw, th = box[2]-box[0], box[3]-box[1]
+              x = max(10, (im.width-tw)//2)
+              y = y if y is not None else im.height-th-30
+              fill = (4,8,18,190) if im.mode == "RGBA" else (4,8,18)
+              d.rounded_rectangle((max(6,x-16), y-10, min(im.width-6,x+tw+16), y+th+12), radius=12, fill=fill)
+              d.text((x,y), text, font=f, fill=(255,255,255,255) if im.mode == "RGBA" else (255,255,255))
+
+          def save(rel, size, kind="card"):
+              p = game / rel
+              p.parent.mkdir(parents=True, exist_ok=True)
+              if kind == "char":
+                  im = Image.new("RGBA", size, (0,0,0,0)); d = ImageDraw.Draw(im); c1,c2 = palette(p.stem)
+                  d.ellipse((size[0]*.34, size[1]*.06, size[0]*.66, size[1]*.30), fill=c1+(255,), outline=(255,255,255,220), width=5)
+                  d.rounded_rectangle((size[0]*.26, size[1]*.26, size[0]*.74, size[1]*.91), radius=100, fill=c2+(245,), outline=c1+(255,), width=8)
+                  label(im, p.stem.replace("_"," ").upper(), int(size[1]*.89))
+              else:
+                  im = gradient(size, p.stem)
+                  label(im, p.stem.replace("_"," ").upper(), int(size[1]*.80))
+              im.save(p)
+
+          for n in bgs: save(f"images/bg/{n}.png", (1920,1080))
+          for n in chars: save(f"images/characters/{n}_neutral.png", (800,1080), "char")
+          for n in contacts:
+              for s in styles: save(f"images/characters_outfits/{n}_{s}.png", (800,1080), "char")
+          for n in items: save(f"images/items/{n}.png", (256,256))
+          for n in outfits: save(f"images/outfits/{n}.png", (480,700))
+          for n in gallery: save(f"images/gallery/{n}.png", (1280,720))
+          save("images/ui/cover_v03.png", (1080,1080))
+          save("images/ui/icon.png", (512,512))
+
+          for name in ("android-presplash.jpg", "android-downloading.jpg"):
+              p = root / name; im = gradient((1920,1080), name); label(im, "NEON FREEDOM", 470); im.save(p, quality=92)
+          p = root / "android-icon_background.png"; gradient((432,432), "android-bg").save(p)
+          p = root / "android-icon_foreground.png"; im = Image.new("RGBA", (432,432), (0,0,0,0)); d = ImageDraw.Draw(im); d.rounded_rectangle((86,86,346,346), radius=70, fill=(15,20,38,240), outline=(255,255,255,255), width=8); d.text((139,170), "NF", font=font(72), fill=(255,255,255,255)); im.save(p)
+          print("Artwork generated")
+          PY
+          test -f project/game/images/ui/cover_v03.png
+          test -f project/android-icon_foreground.png
+
+      - name: Download Ren'Py 8.5.3 and RAPT
         shell: bash
         run: |
-          mkdir -p dist
-          APK="$(find rapt_gradle_project/app/build/outputs/apk/debug -type f -name '*.apk' | head -n 1)"
+          set -euxo pipefail
+          mkdir -p "$RUNNER_TEMP/renpy-download"
+          cd "$RUNNER_TEMP/renpy-download"
+          curl -fL --retry 5 --retry-delay 5 -o renpy-sdk.zip https://www.renpy.org/dl/release/renpy-8.5.3-sdk.zip
+          curl -fL --retry 5 --retry-delay 5 -o rapt.zip https://www.renpy.org/dl/release/renpy-8.5.3-rapt.zip
+          unzip -q renpy-sdk.zip
+          unzip -q rapt.zip -d renpy-8.5.3-sdk
+          echo "RENPY_ROOT=$RUNNER_TEMP/renpy-download/renpy-8.5.3-sdk" >> "$GITHUB_ENV"
+
+      - name: Install Android SDK required by RAPT
+        shell: bash
+        run: |
+          set -euxo pipefail
+          chmod +x "$RENPY_ROOT/renpy.sh" "$RENPY_ROOT/lib/py3-linux-x86_64/python" || true
+          cd "$RENPY_ROOT/rapt"
+          RAPT_NO_TERMS=1 "$RENPY_ROOT/lib/py3-linux-x86_64/python" android.py installsdk
+
+      - name: Ren'Py lint
+        shell: bash
+        run: |
+          "$RENPY_ROOT/renpy.sh" "$GITHUB_WORKSPACE/project" lint
+
+      - name: Build Android APK
+        shell: bash
+        run: |
+          set -euxo pipefail
+          mkdir -p "$GITHUB_WORKSPACE/dist"
+          RAPT_NO_TERMS=1 "$RENPY_ROOT/renpy.sh" launcher android_build "$GITHUB_WORKSPACE/project" --destination "$GITHUB_WORKSPACE/dist"
+          APK="$(find "$GITHUB_WORKSPACE/dist" -type f -name '*.apk' | head -n 1)"
           test -n "$APK"
-          cp "$APK" dist/Neon-Freedom-v0.3-Android-debug.apk
-          sha256sum dist/Neon-Freedom-v0.3-Android-debug.apk > dist/SHA256SUMS.txt
-          ls -lh dist/
+          if [ "$APK" != "$GITHUB_WORKSPACE/dist/Neon-Freedom-v0.3-Android.apk" ]; then
+            cp "$APK" "$GITHUB_WORKSPACE/dist/Neon-Freedom-v0.3-Android.apk"
+          fi
+          sha256sum "$GITHUB_WORKSPACE/dist/Neon-Freedom-v0.3-Android.apk" > "$GITHUB_WORKSPACE/dist/SHA256SUMS.txt"
+          ls -lh "$GITHUB_WORKSPACE/dist"
 
       - name: Upload APK artifact
         uses: actions/upload-artifact@v4
         with:
           name: Neon-Freedom-v0.3-Android-APK
           path: |
-            dist/Neon-Freedom-v0.3-Android-debug.apk
+            dist/Neon-Freedom-v0.3-Android.apk
             dist/SHA256SUMS.txt
           if-no-files-found: error
           retention-days: 30
