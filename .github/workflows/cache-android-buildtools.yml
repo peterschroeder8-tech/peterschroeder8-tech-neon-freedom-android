@@ -1,0 +1,36 @@
+name: Cache Android Build Tools
+
+on:
+  workflow_dispatch:
+  push:
+    paths:
+      - '.github/workflows/cache-android-buildtools.yml'
+
+permissions:
+  contents: read
+
+jobs:
+  cache-buildtools:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - name: Set up Android SDK
+        uses: android-actions/setup-android@v3
+
+      - name: Install Android Build Tools 36
+        shell: bash
+        run: |
+          set -euxo pipefail
+          yes | sdkmanager --licenses >/dev/null || true
+          sdkmanager 'build-tools;36.0.0'
+          mkdir -p bundle
+          cp -a "$ANDROID_HOME/build-tools/36.0.0" bundle/build-tools-36.0.0
+          find bundle -maxdepth 2 -type f | sort
+
+      - name: Upload Android build tools
+        uses: actions/upload-artifact@v4
+        with:
+          name: android-build-tools-36.0.0
+          path: bundle/
+          compression-level: 0
+          retention-days: 1
