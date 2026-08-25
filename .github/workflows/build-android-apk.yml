@@ -26,6 +26,9 @@ jobs:
           distribution: temurin
           java-version: "21"
 
+      - name: Set up Android SDK
+        uses: android-actions/setup-android@v3
+
       - name: Set up Python
         uses: actions/setup-python@v5
         with:
@@ -139,13 +142,23 @@ jobs:
           unzip -q rapt.zip -d renpy-8.5.3-sdk
           echo "RENPY_ROOT=$RUNNER_TEMP/renpy-download/renpy-8.5.3-sdk" >> "$GITHUB_ENV"
 
-      - name: Install Android SDK required by RAPT
+      - name: Prepare Android SDK for RAPT
         shell: bash
         run: |
           set -euxo pipefail
-          chmod +x "$RENPY_ROOT/renpy.sh" "$RENPY_ROOT/lib/py3-linux-x86_64/python" || true
-          cd "$RENPY_ROOT/rapt"
-          PYTHONPATH="$RENPY_ROOT" RAPT_NO_TERMS=1 "$RENPY_ROOT/lib/py3-linux-x86_64/python" android.py installsdk
+          SDK="${ANDROID_SDK_ROOT:-${ANDROID_HOME}}"
+          yes | sdkmanager --licenses >/dev/null || true
+          sdkmanager "platform-tools" "platforms;android-36" "build-tools;36.0.0"
+          printf '%s\n' "$SDK" > "$RENPY_ROOT/rapt/sdk.txt"
+          test -x "$SDK/platform-tools/adb"
+          cat "$RENPY_ROOT/rapt/sdk.txt"
+
+      - name: Create development signing key
+        shell: bash
+        run: |
+          set -euxo pipefail
+          keytool -genkeypair -noprompt -keystore "$GITHUB_WORKSPACE/project/android.keystore" -alias android -keyalg RSA -keysize 2048 -validity 20000 -storepass android -keypass android -dname "CN=Neon Freedom Development,O=Neon Freedom,C=DE"
+          cp "$GITHUB_WORKSPACE/project/android.keystore" "$GITHUB_WORKSPACE/project/bundle.keystore"
 
       - name: Ren'Py lint
         shell: bash
