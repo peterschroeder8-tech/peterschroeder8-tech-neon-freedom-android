@@ -170,7 +170,7 @@ jobs:
         run: |
           set -euxo pipefail
           mkdir -p "$GITHUB_WORKSPACE/dist"
-          RAPT_NO_TERMS=1 "$RENPY_ROOT/renpy.sh" launcher android_build "$GITHUB_WORKSPACE/project" --destination "$GITHUB_WORKSPACE/dist"
+          RAPT_NO_TERMS=1 "$RENPY_ROOT/renpy.sh" "$RENPY_ROOT/launcher" android_build "$GITHUB_WORKSPACE/project" --destination "$GITHUB_WORKSPACE/dist"
           APK="$(find "$GITHUB_WORKSPACE/dist" -type f -name '*.apk' | head -n 1)"
           test -n "$APK"
           if [ "$APK" != "$GITHUB_WORKSPACE/dist/Neon-Freedom-v0.3-Android.apk" ]; then
