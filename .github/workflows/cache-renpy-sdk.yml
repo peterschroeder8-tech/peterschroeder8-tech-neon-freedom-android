@@ -1,0 +1,32 @@
+name: Cache RenPy SDK
+
+on:
+  workflow_dispatch:
+  push:
+    paths:
+      - '.github/workflows/cache-renpy-sdk.yml'
+
+permissions:
+  contents: read
+
+jobs:
+  cache-sdk:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - name: Download RenPy 8.5.3 SDK and RAPT
+        shell: bash
+        run: |
+          set -euxo pipefail
+          mkdir -p downloads
+          curl -fL --retry 5 --retry-delay 5 -o downloads/renpy-8.5.3-sdk.zip https://www.renpy.org/dl/8.5.3/renpy-8.5.3-sdk.zip
+          curl -fL --retry 5 --retry-delay 5 -o downloads/renpy-8.5.3-rapt.zip https://www.renpy.org/dl/8.5.3/renpy-8.5.3-rapt.zip
+          sha256sum downloads/* > downloads/SHA256SUMS.txt
+
+      - name: Upload RenPy SDK bundle
+        uses: actions/upload-artifact@v4
+        with:
+          name: renpy-8.5.3-sdk-rapt
+          path: downloads/
+          compression-level: 0
+          retention-days: 1
